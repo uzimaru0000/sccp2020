@@ -4,15 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
-	"strconv"
+
+	"github.com/uzimaru0000/kapro/repo"
+	"github.com/uzimaru0000/kapro/todo"
 )
 
-var todoTable map[int]string
-var id int
+var todoRepo repo.TodoRepo
 
 func init() {
-	todoTable = make(map[int]string)
-	id = 0
+	todoRepo = repo.NewInMemTodoRepo()
 }
 
 func main() {
@@ -21,8 +21,9 @@ func main() {
 	http.HandleFunc("/todo/", todoHandlerWithID)
 
 	fmt.Printf("Server is running...!\n")
-	err := http.ListenAndServe(":8080", nil)
-	fmt.Println(err)
+	if err := http.ListenAndServe(":8080", nil); err != nil {
+		fmt.Println(err)
+	}
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -32,47 +33,53 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 func todoHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		for i, todo := range todoTable {
-			fmt.Fprintf(w, "%d\t%s\n", i, todo)
+		todoList, err := todoRepo.GetAll()
+		if err != nil {
+			fmt.Fprintln(w, err.Error())
+			return
+		}
+
+		for _, todo := range todoList {
+			fmt.Fprintf(w, "%s\n", todo.ToString())
 		}
 	case "POST":
-		bufbody := new(bytes.Buffer)
-		bufbody.ReadFrom(r.Body)
-		body := bufbody.String()
-		todoTable[id] = body
-		id++
+		body := getBody(r)
+		err := todoRepo.Store(todo.New(body))
+		if err != nil {
+			fmt.Fprintln(w, err.Error())
+			return
+		}
 		fmt.Fprint(w, "Success")
 	}
 }
 
 func todoHandlerWithID(w http.ResponseWriter, r *http.Request) {
-	query := pathSlice("/todo/", r.URL.Path)
+	id := pathSlice("/todo/", r.URL.Path)
 
-	id, err := strconv.Atoi(query)
+	todo, err := todoRepo.Get(&todo.Todo{Id: id})
 	if err != nil {
-		fmt.Fprintln(w, "The ID has to be a number.")
-		return
-	}
-
-	todo, ok := todoTable[id]
-	if !ok {
-		fmt.Fprintln(w, "Please specify your registered ID")
+		fmt.Fprintln(w, err)
 		return
 	}
 
 	switch r.Method {
 	case "GET":
-		fmt.Fprintf(w, "%d\t%s\n", id, todo)
+		fmt.Fprintf(w, "%s\n", todo.ToString())
 	case "PUT":
-		bufbody := new(bytes.Buffer)
-		bufbody.ReadFrom(r.Body)
-		body := bufbody.String()
-		todoTable[id] = body
+		body := getBody(r)
+		todo.Update(body)
+		todoRepo.Update(todo)
 		fmt.Fprintln(w, "success")
 	case "DELETE":
-		delete(todoTable, id)
+		todoRepo.Delete(todo)
 		fmt.Fprintln(w, "success")
 	}
+}
+
+func getBody(r *http.Request) string {
+	bufbody := new(bytes.Buffer)
+	bufbody.ReadFrom(r.Body)
+	return bufbody.String()
 }
 
 func pathSlice(pattern string, path string) string {
